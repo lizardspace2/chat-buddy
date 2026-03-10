@@ -13,6 +13,16 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        serif: ["Lora", "Georgia", "serif"],
+        body: ["DM Sans", "system-ui", "sans-serif"],
+        mono: ["DM Mono", "monospace"],
+      },
+      fontSize: {
+        "received": ["18px", { lineHeight: "1.6", letterSpacing: "0.01em" }],
+        "sent": ["16px", { lineHeight: "1.5", letterSpacing: "0.02em" }],
+        "meta": ["10px", { lineHeight: "1.4", letterSpacing: "0.12em" }],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -47,6 +57,10 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        received: "hsl(var(--received-text))",
+        sent: "hsl(var(--sent-text))",
+        timestamp: "hsl(var(--timestamp))",
+        "typing-cursor": "hsl(var(--typing-cursor))",
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
@@ -65,20 +79,12 @@ export default {
       },
       keyframes: {
         "accordion-down": {
-          from: {
-            height: "0",
-          },
-          to: {
-            height: "var(--radix-accordion-content-height)",
-          },
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
         },
         "accordion-up": {
-          from: {
-            height: "var(--radix-accordion-content-height)",
-          },
-          to: {
-            height: "0",
-          },
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
         },
       },
       animation: {
