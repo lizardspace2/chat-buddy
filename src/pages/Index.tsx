@@ -2,35 +2,42 @@ import { useState, useRef, useEffect } from "react";
 import { ArrowUp } from "lucide-react";
 import TypingIndicator from "@/components/TypingIndicator";
 import ReactMarkdown from "react-markdown";
+import { toast } from "sonner";
 
 interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
 }
 
-const SIMULATED_RESPONSES = [
-  "C'est une question intéressante. Laisse-moi y réfléchir un instant.\n\nJe pense que la meilleure approche serait de commencer par les fondamentaux, puis d'itérer progressivement.",
-  "Bien sûr ! Voici ce que je te propose :\n\n1. **Première étape** — Définir clairement l'objectif\n2. **Deuxième étape** — Identifier les contraintes\n3. **Troisième étape** — Prototyper rapidement",
-  "Je comprends tout à fait. N'hésite pas à me donner plus de détails si tu veux que j'approfondisse un point en particulier.",
-  "Excellente idée. Si tu veux, je peux t'aider à structurer ça de manière plus détaillée.",
-  "Voilà une piste de réflexion. Le plus important est de rester pragmatique et d'avancer pas à pas.",
-];
+const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;
+const LLM_MODEL = import.meta.env.VITE_GROQ_MODEL || "llama-3.3-70b-versatile";
 
 const Index = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const isSendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, isTyping]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = input.trim();
-    if (!text || isTyping) return;
+    if (!text || isTyping || isSendingRef.current) return;
+
+    isSendingRef.current = true;
+    setIsTyping(true);
+
+    if (!GROQ_API_KEY || GROQ_API_KEY === "your_api_key_here") {
+      toast.error("Veuillez configurer votre clé API Groq dans le fichier .env");
+      setIsTyping(false);
+      isSendingRef.current = false;
+      return;
+    }
 
     const userMsg: Message = {
       id: `u-${Date.now()}`,
@@ -41,21 +48,53 @@ const Index = () => {
 
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
-    setIsTyping(true);
 
-    // Simulate AI response
-    const delay = 1200 + Math.random() * 2000;
-    setTimeout(() => {
-      const response = SIMULATED_RESPONSES[Math.floor(Math.random() * SIMULATED_RESPONSES.length)];
+    try {
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: LLM_MODEL,
+          messages: messages.concat(userMsg).map(m => ({
+            role: m.role,
+            content: m.content
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          throw new Error("Limite de requêtes atteinte sur Groq (Free Tier). Attendez une minute.");
+        }
+        const errorText = await response.text();
+        let errorMessage = "Erreur lors de l'appel à l'API Groq";
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error?.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
       const assistantMsg: Message = {
         id: `a-${Date.now()}`,
         role: "assistant",
-        content: response,
+        content: data.choices[0].message.content,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
+    } catch (error: any) {
+      console.error("LLM Error:", error);
+      toast.error(error.message || "Une erreur est survenue");
+    } finally {
       setIsTyping(false);
-    }, delay);
+      isSendingRef.current = false;
+    }
   };
 
   const formatTime = (date: Date) => {
@@ -67,24 +106,29 @@ const Index = () => {
       {/* Header */}
       <div className="px-8 py-5 border-b border-border">
         <h1 className="font-mono text-meta uppercase tracking-widest text-muted-foreground">
-          Assistant
+          Assistant LLM
         </h1>
       </div>
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-6 space-y-6">
         {messages.length === 0 && (
-          <div className="flex-1 flex items-center justify-center h-full">
-            <p className="font-mono text-meta uppercase text-muted-foreground tracking-widest">
-              Commencez une conversation
-            </p>
+          <div className="flex-1 flex items-center justify-center h-full text-center">
+            <div className="space-y-4">
+              <p className="font-mono text-meta uppercase text-muted-foreground tracking-widest">
+                Prêt à discuter
+              </p>
+              <p className="text-xs text-muted-foreground opacity-50 font-mono">
+                Modèle: {LLM_MODEL}
+              </p>
+            </div>
           </div>
         )}
 
         {messages.map((msg) => (
           <div key={msg.id} className={`max-w-[80%] ${msg.role === "user" ? "ml-auto" : "mr-auto"}`}>
             {msg.role === "assistant" ? (
-              <div className="font-serif text-received text-foreground prose prose-sm max-w-none">
+              <div className="font-serif text-received text-foreground prose prose-sm max-w-none dark:prose-invert">
                 <ReactMarkdown>{msg.content}</ReactMarkdown>
               </div>
             ) : (
@@ -112,7 +156,7 @@ const Index = () => {
           <button
             onClick={handleSend}
             disabled={!input.trim() || isTyping}
-            className="text-accent disabled:opacity-30 transition-opacity hover:opacity-80"
+            className="text-accent disabled:opacity-30 transition-opacity hover:opacity-80 p-2"
           >
             <ArrowUp size={18} />
           </button>
