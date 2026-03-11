@@ -23,15 +23,33 @@ CREATE TABLE IF NOT EXISTS summaries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   content TEXT NOT NULL,
   timestamp TIMESTAMPTZ DEFAULT NOW(),
-  session_id UUID -- Permet de lier le résumé à sa conversation
+  session_id UUID UNIQUE -- Permet de lier le résumé à sa conversation
 );
+
+-- 4. Table des plages de disponibilité (Sert pour configurer l'agenda type Doctolib)
+CREATE TABLE IF NOT EXISTS availability_ranges (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  day_of_week INT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6), -- 0=Dimanche, 1=Lundi, etc.
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  CONSTRAINT valid_range CHECK (start_time < end_time)
+);
+
+-- Ajouter une clé étrangère aux messages pour lier les messages aux résumés via session_id
+ALTER TABLE messages
+ADD CONSTRAINT fk_session
+FOREIGN KEY (session_id)
+REFERENCES summaries(session_id)
+ON DELETE CASCADE;
 
 -- Permissions de base pour permettre l'écriture/lecture anonyme 
 -- Note: À affiner pour la production
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE summaries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE availability_ranges ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow all for anonymous" ON messages FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anonymous" ON appointments FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anonymous" ON summaries FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all for anonymous" ON availability_ranges FOR ALL USING (true) WITH CHECK (true);
