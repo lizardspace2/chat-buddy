@@ -483,7 +483,7 @@ const Index = () => {
         recognitionRef.current.continuous = false;
         recognitionRef.current.interimResults = true;
         recognitionRef.current.lang = "fr-FR";
-        // ... Re-attach handlers would be better here, but let's hope init worked
+        // .. Re-attach handlers would be better here, but let's hope init worked
       }
       try {
         console.log("SpeechRecognition: Starting manually...");
