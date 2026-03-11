@@ -86,6 +86,7 @@ const Index = () => {
   // Manual Entry States
   const [isAppDialogOpen, setIsAppDialogOpen] = useState(false);
   const [isSummDialogOpen, setIsSummDialogOpen] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [manualApp, setManualApp] = useState({ patientName: "", reason: "", date: "", time: "09:00" });
   const [manualSumm, setManualSumm] = useState("");
   const [manualTranscript, setManualTranscript] = useState("");
@@ -1592,6 +1593,38 @@ const Index = () => {
                             </form>
                           </DialogContent>
                         </Dialog>
+                        <Dialog open={!!selectedAppointment} onOpenChange={(open) => !open && setSelectedAppointment(null)}>
+                          <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>Détails du Rendez-vous</DialogTitle>
+                            </DialogHeader>
+                            {selectedAppointment && (
+                              <div className="space-y-4 py-4">
+                                <div className="space-y-2">
+                                  <Label className="text-slate-500">Patient</Label>
+                                  <p className="font-semibold text-lg">{selectedAppointment.patientName}</p>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="text-slate-500">Motif</Label>
+                                  <p>{selectedAppointment.reason}</p>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div className="space-y-2">
+                                    <Label className="text-slate-500">Date</Label>
+                                    <p className="capitalize">{selectedAppointment.date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-slate-500">Heure</Label>
+                                    <p>{selectedAppointment.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            <DialogFooter>
+                              <Button variant="outline" onClick={() => setSelectedAppointment(null)}>Fermer</Button>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
                         <span className="text-xs bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-md border border-slate-200">
                           {selectedDate
                             ? (viewMode === "day"
@@ -1633,6 +1666,7 @@ const Index = () => {
                                     {hourApps.map(app => (
                                       <div
                                         key={app.id}
+                                        onClick={() => setSelectedAppointment(app)}
                                         className="rounded-sm border-l-[4px] p-2 hover:brightness-95 transition-all relative overflow-hidden group/app cursor-pointer"
                                         style={{
                                           backgroundColor: getLightColor(app.patientName),
@@ -1721,6 +1755,7 @@ const Index = () => {
                                           return (
                                             <div
                                               key={app.id}
+                                              onClick={(e) => { e.stopPropagation(); setSelectedAppointment(app); }}
                                               className="absolute left-[2px] flex flex-col right-[2px] rounded-[3px] text-[11px] p-1.5 overflow-hidden pointer-events-auto cursor-pointer hover:brightness-95 transition-all z-20 group border-l-[4px]"
                                               style={{
                                                 top: `${topPosition + 1}px`,
@@ -1813,7 +1848,8 @@ const Index = () => {
                                       {dayApps.slice(0, 3).map(app => (
                                         <div
                                           key={app.id}
-                                          className="text-[9px] px-1 py-0.5 rounded-sm border-l-2 truncate"
+                                          onClick={(e) => { e.stopPropagation(); setSelectedAppointment(app); }}
+                                          className="text-[9px] px-1 py-0.5 rounded-sm border-l-2 truncate cursor-pointer hover:opacity-80 transition-opacity"
                                           style={{
                                             backgroundColor: getLightColor(app.patientName),
                                             borderLeftColor: getStringColor(app.patientName),
@@ -1846,7 +1882,7 @@ const Index = () => {
                             appointments.sort((a, b) => a.date.getTime() - b.date.getTime()).map(app => {
                               const isValidDate = !isNaN(app.date.getTime());
                               return (
-                                <div key={app.id} className="flex items-center justify-between p-4 bg-background border border-border rounded-xl hover:border-primary/50 hover:shadow-sm transition-all group">
+                                <div key={app.id} onClick={() => setSelectedAppointment(app)} className="flex items-center justify-between p-4 bg-background border border-border rounded-xl hover:border-primary/50 hover:shadow-sm transition-all group cursor-pointer">
                                   <div className="space-y-1">
                                     <p className="font-semibold text-foreground group-hover:text-primary transition-colors">{app.patientName}</p>
                                     <p className="text-xs text-muted-foreground">{app.reason}</p>
