@@ -1048,7 +1048,15 @@ const Index = () => {
                   {isTyping && <TypingIndicator />}
                 </div>
 
-                <div className="p-4 border-t border-border mt-auto">
+                <div className="p-4 border-t border-border mt-auto space-y-3">
+                  <div className="flex items-start gap-2 text-xs bg-blue-50 text-blue-800 p-3 rounded-xl border border-blue-100">
+                    <div className="w-4 h-4 rounded-full bg-blue-200 text-blue-900 flex items-center justify-center font-serif italic font-bold shrink-0 mt-0.5 text-[10px]">
+                      i
+                    </div>
+                    <p>
+                      Merci de raccrocher le microphone une fois la conversation terminée afin d'enregistrer le rendez-vous et la discussion.
+                    </p>
+                  </div>
                   <div className="flex items-center gap-4 bg-muted/30 p-2 rounded-2xl border border-border">
                     <button
                       onClick={toggleListening}
