@@ -616,10 +616,14 @@ const Index = () => {
 
         // Save Summary to Supabase (Background)
         const newDbSumm = { content: data.choices[0].message.content, session_id: sessionId, timestamp: new Date().toISOString() };
-        supabase.from('summaries').insert([newDbSumm]).then(({ error }) => {
+        supabase.from('summaries').upsert([newDbSumm], { onConflict: 'session_id' }).then(({ error }) => {
           if (error) console.error("Supabase summary save error:", error);
           else {
-            setAllSummaries(prev => [newDbSumm, ...prev].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+            setAllSummaries(prev => {
+              const finalSumm = { ...newDbSumm, messages: [...messages] };
+              const filtered = prev.filter(s => s.session_id !== sessionId);
+              return [finalSumm, ...filtered].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            });
           }
         });
       }
