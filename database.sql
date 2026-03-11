@@ -35,13 +35,6 @@ CREATE TABLE IF NOT EXISTS availability_ranges (
   CONSTRAINT valid_range CHECK (start_time < end_time)
 );
 
--- Ajouter une clé étrangère aux messages pour lier les messages aux résumés via session_id
-ALTER TABLE messages
-ADD CONSTRAINT fk_session
-FOREIGN KEY (session_id)
-REFERENCES summaries(session_id)
-ON DELETE CASCADE;
-
 -- Permissions de base pour permettre l'écriture/lecture anonyme 
 -- Note: À affiner pour la production
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;

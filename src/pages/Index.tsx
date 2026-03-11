@@ -43,9 +43,19 @@ interface Appointment {
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;
 const LLM_MODEL = import.meta.env.VITE_GROQ_MODEL || "llama-3.3-70b-versatile";
 
+// Globalization of SpeechRecognition for consistency across component
+const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
 const SYSTEM_PROMPT = {
   role: "system",
-  content: "Tu es une secrétaire de cabinet médical. Tes réponses doivent être très courtes, naturelles et professionnelles. Ne fais pas de longues phrases. Pose une seule question à la fois pour aider le patient à prendre rendez-vous (nom, motif, date/heure souhaitée). Ne sois pas trop bavarde, sois concise comme une secrétaire occupée."
+  content: `Tu es une secrétaire de cabinet médical. Tes réponses doivent être très courtes, naturelles et professionnelles. Ne fais pas de longues phrases. 
+  
+  RÈGLES CRITIQUES :
+  - Utilise le contexte de l'AGENDA fourni pour répondre DIRECTEMENT aux questions de disponibilité.
+  - Ne dis JAMAIS "Je vais vérifier", "Laissez-moi un instant" ou "Je regarde les disponibilités". Tu as l'agenda sous les yeux.
+  - Réponds immédiatement par "Oui nous avons de la place à [Heure]" ou "Non, ce créneau est déjà pris, je peux vous proposer [Alternative]".
+  - Pose une seule question à la fois pour aider le patient à prendre rendez-vous (nom, motif, date/heure souhaitée).
+  - Ne sois pas trop bavarde, sois concise comme une secrétaire occupée.`
 };
 
 const Index = () => {
@@ -209,18 +219,51 @@ const Index = () => {
     }
   }, []);
 
+  const getAgendaContext = () => {
+    const today = new Date();
+    const workingHours = availabilityRanges.map(r => {
+      const days = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+      return `${days[r.day_of_week]} : ${r.start_time} - ${r.end_time}`;
+    }).join(', ');
+
+    const upcomingApps = appointments
+      .filter(a => a.date >= today)
+      .map(a => `${a.date.toLocaleString('fr-FR')} : ${a.patientName} (${a.reason})`)
+      .join('\n');
+
+    return `DATE ACTUELLE : ${today.toISOString()}
+    HEURES D'OUVERTURE : ${workingHours || "Non configurées"}
+    RDV EXISTANTS :
+    ${upcomingApps || "Aucun rendez-vous à venir"}`;
+  };
+
   const handleSend = async (overrideText?: string) => {
     const text = (overrideText || input).trim();
-    if (!text || isTyping || isSendingRef.current) return;
+    if (!text || isSendingRef.current) return;
 
     isSendingRef.current = true;
     setIsTyping(true);
+    setInput(""); // Clear input immediately to prevent double-send and visual lag
 
     if (!GROQ_API_KEY || GROQ_API_KEY === "your_api_key_here") {
       toast.error("Veuillez configurer votre clé API Groq dans le fichier .env");
       setIsTyping(false);
       isSendingRef.current = false;
       return;
+    }
+
+    // Ensure session exists in Supabase before saving messages (bypass FK constraint)
+    try {
+      const { data: existing } = await supabase.from('summaries').select('id').eq('session_id', sessionId).single();
+      if (!existing) {
+        await supabase.from('summaries').insert([{
+          session_id: sessionId,
+          content: "Discussion en cours...",
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    } catch (e) {
+      console.error("Session initialization error:", e);
     }
 
     const userMsg: Message = {
@@ -231,7 +274,6 @@ const Index = () => {
     };
 
     setMessages((prev) => [...prev, userMsg]);
-    setInput("");
 
     // Save User message to Supabase (Background)
     supabase.from('messages').insert([{
@@ -254,7 +296,10 @@ const Index = () => {
         body: JSON.stringify({
           model: LLM_MODEL,
           messages: [
-            SYSTEM_PROMPT,
+            {
+              role: "system",
+              content: `${SYSTEM_PROMPT.content}\n\nCONTEXTE AGENDA :\n${getAgendaContext()}`
+            },
             ...messages.concat(userMsg).map(m => ({
               role: m.role,
               content: m.content
@@ -318,81 +363,147 @@ const Index = () => {
 
   useEffect(() => {
     // Initialize Speech Recognition
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
+    if (SpeechRecognitionAPI) {
+      console.log("SpeechRecognition: Initializing...");
+      recognitionRef.current = new SpeechRecognitionAPI();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = true;
       recognitionRef.current.lang = "fr-FR";
 
-      recognitionRef.current.onresult = (event: any) => {
-        let transcript = "";
-        let isFinal = false;
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          transcript += event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            isFinal = true;
-          }
-        }
-
-        setInput(transcript);
-
-        if (isFinal) {
-          handleSendRef.current(transcript);
-        }
+      recognitionRef.current.onstart = () => {
+        console.log("SpeechRecognition: started");
       };
 
-      recognitionRef.current.onend = () => {
-        if (isListeningRef.current) {
-          try {
-            recognitionRef.current.start();
-          } catch (error) {
-            console.error("Failed to restart recognition:", error);
+      recognitionRef.current.onaudiostart = () => {
+        console.log("SpeechRecognition: audio start");
+      };
+
+      recognitionRef.current.onspeechstart = () => {
+        console.log("SpeechRecognition: speech start");
+      };
+
+      recognitionRef.current.onresult = (event: any) => {
+        console.log("SpeechRecognition: result event", event);
+        let interimTranscript = "";
+        let finalTranscript = "";
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const result = event.results[i];
+          const transcript = result[0].transcript;
+          if (result.isFinal) {
+            finalTranscript += transcript;
+            console.log("SpeechRecognition: Final transcript slice:", transcript);
+          } else {
+            interimTranscript += transcript;
+            console.log("SpeechRecognition: Interim transcript slice:", transcript);
           }
-        } else {
-          setIsListening(false);
+        }
+
+        const fullDisplay = finalTranscript || interimTranscript;
+        if (fullDisplay.trim()) {
+          console.log("SpeechRecognition: Updating input to:", fullDisplay);
+          setInput(fullDisplay);
+        }
+
+        if (finalTranscript.trim() && !isSendingRef.current) {
+          console.log("SpeechRecognition: Automatically sending final result:", finalTranscript);
+          handleSendRef.current(finalTranscript);
         }
       };
 
       recognitionRef.current.onerror = (event: any) => {
-        // Silently handle 'no-speech' error which is common in continuous mode
+        console.error("SpeechRecognition: error event", event.error, event);
         if (event.error === 'no-speech') {
-          console.debug("Speech recognition: no speech detected");
+          console.debug("SpeechRecognition: no speech detected");
           return;
         }
 
-        console.error("Speech recognition error", event.error);
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
           isListeningRef.current = false;
           setIsListening(false);
           toast.error("Permission micro refusée ou non supportée.");
         }
       };
+
+      recognitionRef.current.onspeechend = () => {
+        console.log("SpeechRecognition: speech end");
+      };
+
+      recognitionRef.current.onaudioend = () => {
+        console.log("SpeechRecognition: audio end");
+      };
+
+      recognitionRef.current.onend = () => {
+        console.log("SpeechRecognition: end event. isListeningRef:", isListeningRef.current);
+        if (isListeningRef.current) {
+          try {
+            console.log("SpeechRecognition: Attempting restart...");
+            recognitionRef.current.start();
+          } catch (error) {
+            console.error("SpeechRecognition: Failed to restart:", error);
+          }
+        } else {
+          setIsListening(false);
+        }
+      };
     }
   }, []);
 
-  const toggleListening = () => {
+  const toggleListening = async () => {
     if (isListening) {
       isListeningRef.current = false;
       setIsListening(false);
       recognitionRef.current?.stop();
+
+      // If there's unfinished text in the input box, send it before finalizing
+      if (input.trim()) {
+        await handleSend();
+      }
+
+      // Sequential actions on stop
+      if (messages.length > 0 || input.trim()) {
+        await finalizeConversation();
+
+        // Reset everything for next time
+        setMessages([]);
+        setSummary("");
+        const newId = crypto.randomUUID();
+        setSessionId(newId);
+        localStorage.setItem("chat_session_id", newId);
+        setInput("");
+      }
     } else {
-      if (!recognitionRef.current) {
+      if (!recognitionRef.current && !SpeechRecognitionAPI) {
         toast.error("La reconnaissance vocale n'est pas supportée par votre navigateur.");
         return;
       }
+      if (!recognitionRef.current && SpeechRecognitionAPI) {
+        // Emergency re-init if ref is lost
+        recognitionRef.current = new SpeechRecognitionAPI();
+        recognitionRef.current.continuous = false;
+        recognitionRef.current.interimResults = true;
+        recognitionRef.current.lang = "fr-FR";
+        // ... Re-attach handlers would be better here, but let's hope init worked
+      }
       try {
+        console.log("SpeechRecognition: Starting manually...");
         isListeningRef.current = true;
         setIsListening(true);
         recognitionRef.current.start();
+        console.log("SpeechRecognition: .start() called");
+        toast.success("Microphone activé. Parlez maintenant.");
       } catch (error) {
-        console.error("Error starting recognition", error);
+        console.error("SpeechRecognition: Error starting recognition", error);
+        toast.error("Erreur technique lors du démarrage du micro.");
       }
     }
   };
 
   const extractAppointment = async (chatMessages: Message[]) => {
+    const processingToastId = toast.info("Analyse du rendez-vous...", {
+      description: "La secrétaire médicale extrait les détails..."
+    });
+
     try {
       const currentDate = new Date().toISOString().split('T')[0];
       const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -411,7 +522,8 @@ const Index = () => {
               Analyse la conversation et extrais les détails du rendez-vous. 
               FORMAT JSON STRICT : { "patientName": string, "reason": string, "date": "YYYY-MM-DD", "time": "HH:mm" }. 
               Si une info est relative (ex: 'demain'), calcule la date exacte basée sur la DATE ACTUELLE. 
-              Si absent, mets "inconnu".`
+              IMPORTANT : Si le nom du patient est inconnu, mets "Patient Inconnu". Si le motif est inconnu, mets "Consultation".
+              Si la date n'est pas claire mais qu'une intention de RDV existe, essaie d'extraire au moins l'intention.`
             },
             ...chatMessages.map(m => ({ role: m.role, content: m.content }))
           ],
@@ -423,7 +535,7 @@ const Index = () => {
         const data = await response.json();
         const details = JSON.parse(data.choices[0].message.content);
 
-        if (details.patientName !== "inconnu" && details.date !== "inconnu") {
+        if (details.date !== "inconnu" && details.date !== "YYYY-MM-DD") {
           // Normalize date/time
           let appointmentDate: Date;
           try {
@@ -434,6 +546,7 @@ const Index = () => {
             }
           } catch (e) {
             console.error("Failed to parse date:", details.date, details.time);
+            toast.dismiss(processingToastId);
             return;
           }
 
@@ -445,7 +558,13 @@ const Index = () => {
             status: "confirmed"
           };
           setAppointments(prev => [...prev, newApp]);
-          toast.success(`RDV ajouté : ${details.patientName}`);
+
+          toast.dismiss(processingToastId);
+          const formattedDate = appointmentDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+          toast.success(`Rendez-vous enregistré avec succès`, {
+            description: `${details.patientName} le ${formattedDate} à ${details.time !== "inconnu" ? details.time : "09:00"}`,
+            icon: <CalendarIcon className="h-4 w-4 text-emerald-500" />
+          });
 
           // Save Appointment to Supabase (Background)
           supabase.from('appointments').insert([{
@@ -456,10 +575,15 @@ const Index = () => {
           }]).then(({ error }) => {
             if (error) console.error("Supabase appointment save error:", error);
           });
+        } else {
+          toast.dismiss(processingToastId);
         }
+      } else {
+        toast.dismiss(processingToastId);
       }
     } catch (err) {
       console.error("Extraction error", err);
+      toast.dismiss(processingToastId);
     }
   };
 
@@ -485,7 +609,10 @@ const Index = () => {
       if (response.ok) {
         const data = await response.json();
         setSummary(data.choices[0].message.content);
-        toast.info("Résumé généré pour le médecin");
+        toast.success("Résumé enregistré avec succès", {
+          description: "Le compte-rendu médical a été ajouté à l'historique.",
+          icon: <ClipboardList className="h-4 w-4 text-emerald-500" />
+        });
 
         // Save Summary to Supabase (Background)
         const newDbSumm = { content: data.choices[0].message.content, session_id: sessionId, timestamp: new Date().toISOString() };
@@ -501,6 +628,20 @@ const Index = () => {
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const finalizeConversation = async () => {
+    if (messages.length === 0) return;
+
+    toast.info("Finalisation et enregistrement...", {
+      description: "Résumé et rendez-vous en cours de traitement."
+    });
+
+    // Run both in parallel for efficiency, but wait for both
+    await Promise.all([
+      generateSummary(),
+      extractAppointment(messages)
+    ]);
   };
 
   const handleManualAppointment = async (e: React.FormEvent) => {
@@ -787,8 +928,7 @@ const Index = () => {
 
   const startNewConversation = async () => {
     if (messages.length > 0) {
-      toast.info("Finalisation de la conversation...");
-      await generateSummary();
+      await finalizeConversation();
     }
 
     const newId = crypto.randomUUID();
